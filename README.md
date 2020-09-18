@@ -36,3 +36,7 @@ Ignored Consumer ID sent in the header for deque.
 # Improvements:
 1) Add benchmark testing and load testing
 2) Separate into different packages. Instead of all the files in cmd/server .
+
+# Compile and Run:
+make build 
+./bin/server
