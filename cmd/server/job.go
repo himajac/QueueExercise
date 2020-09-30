@@ -41,7 +41,9 @@ func (h *handler) enqueue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) dequeue(w http.ResponseWriter, r *http.Request) {
-	jobDeque, err := h.queue.Dequeue()
+	cId := r.Header.Get("CONSUMER_ID")
+
+	jobDeque, err := h.queue.Dequeue(cId)
 	if err != nil {
 		h.logger.Log("level", "error", "error", err.Error())
 		Respond(w, http.StatusInternalServerError, err.Error())
@@ -62,7 +64,9 @@ func (h *handler) conclude(w http.ResponseWriter, r *http.Request) {
 
 	jobID, _ := strconv.Atoi(id)
 
-	err := h.queue.Conclude(jobID)
+	cId := r.Header.Get("CONSUMER_ID")
+
+	err := h.queue.Conclude(jobID, cId)
 	if err != nil {
 		Respond(w, http.StatusInternalServerError, err.Error())
 		return

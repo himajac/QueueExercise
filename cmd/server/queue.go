@@ -11,8 +11,8 @@ import (
 //Queue is an interface used for storing job details.
 type Queue interface {
 	Enqueue(item *job) (int, error)
-	Dequeue() (*job, error)
-	Conclude(jobID int) error
+	Dequeue(consumerId string) (*job, error)
+	Conclude(jobID int, consumerId string) error
 	GetJob(jobID int) (*job, error)
 	GetJobs() (*[]job, error)
 	Remove() (int, error)
@@ -50,7 +50,7 @@ func (q *JobQueue) Enqueue(item *job) (int, error) {
 }
 
 //Returns a job from the queue . Jobs are considered available for Dequeue if the job has not been concluded or has not been Dequeued already.
-func (q *JobQueue) Dequeue() (*job, error) {
+func (q *JobQueue) Dequeue(consumerId string) (*job, error) {
 	if q.count == 0 {
 		return nil, errors.New("Dequeue on empty Job Queue.No jobs to process")
 	}
@@ -70,7 +70,7 @@ func (q *JobQueue) Dequeue() (*job, error) {
 }
 
 //Given JobID ,finish execution on the job and change the status to CONCLUDED.
-func (q *JobQueue) Conclude(jobID int) error {
+func (q *JobQueue) Conclude(jobID int, consumerId string) error {
 	if q.count == 0 {
 		return errors.New("Empty Job Queue.No jobs to Conclude")
 	}
@@ -139,17 +139,18 @@ type Element struct {
 //JobListQueue is a concrete implementation of the Queue Interface using LinkedList.
 //sync.Map is used to store jobId and index as key,value pair. This helps to get the job in constant time.
 type JobListQueue struct {
-	head  *Element
-	tail  *Element
-	count int
-	log   log.Logger
-	mutex sync.Mutex
-	m     sync.Map
+	head            *Element
+	tail            *Element
+	count           int
+	log             log.Logger
+	mutex           sync.Mutex
+	m               sync.Map
+	consumerDetails sync.Map
 }
 
 func NewLinkedListQueue(logger log.Logger) *JobListQueue {
 	count := 0
-	return &JobListQueue{nil, nil, count, logger, sync.Mutex{}, sync.Map{}}
+	return &JobListQueue{nil, nil, count, logger, sync.Mutex{}, sync.Map{}, sync.Map{}}
 }
 
 //Adds a job to the queue.And changes the job Status to "QUEUED". Returns JobId and error.
@@ -176,7 +177,7 @@ func (q *JobListQueue) Enqueue(item *job) (int, error) {
 }
 
 //Returns a job from the queue . Jobs are considered available for Dequeue if the job has not been concluded or has not been Dequeued already.
-func (q *JobListQueue) Dequeue() (*job, error) {
+func (q *JobListQueue) Dequeue(consumerId string) (*job, error) {
 	if q.head == nil {
 		return nil, errors.New("Dequeue on empty Job Queue.No jobs to process.")
 	}
@@ -188,6 +189,8 @@ func (q *JobListQueue) Dequeue() (*job, error) {
 			//Lock on the item to be dequeued instead of entire queue.This allows operations like enqueue & conclude without blocking
 			curr.Value.mutex.Lock()
 			curr.Value.Status = "IN_PROGRESS"
+			//Add the details to map
+			q.consumerDetails.Store(curr.Value.Id, consumerId) //Used to store the itemId and Address of the item as key,value pair.
 			curr.Value.mutex.Unlock()
 
 			return &curr.Value, nil
@@ -198,9 +201,19 @@ func (q *JobListQueue) Dequeue() (*job, error) {
 }
 
 //For the jobId provided ,finishes execution on the job and change the status to CONCLUDED
-func (q *JobListQueue) Conclude(jobID int) error {
+func (q *JobListQueue) Conclude(jobID int, consumerId string) error {
 	if q.head == nil {
 		return errors.New("Empty Job Queue.No jobs to Conclude.")
+	}
+
+	//Get the consumerId used to Dequeue the Job
+	cId, ok := q.consumerDetails.Load(jobID)
+	if !ok {
+		return errors.New("JobId not present in the Queue")
+	}
+
+	if cId != consumerId {
+		return errors.New("Not Valid consumer to Conclude the Job")
 	}
 
 	//Get the index from the map
@@ -215,6 +228,32 @@ func (q *JobListQueue) Conclude(jobID int) error {
 	time.Sleep(2 * time.Millisecond)         //Instead of job execution code
 	addrOfElement.Value.Status = "CONCLUDED" //Change the status to concluded.
 	addrOfElement.Value.mutex.Unlock()
+
+	return nil
+}
+
+func (q *JobListQueue) Cancel(jobID int) error {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+
+	if q.head == nil {
+		return errors.New("Empty Job Queue.No jobs to Conclude.")
+	}
+
+	//Get the index from the map
+	v, ok := q.m.Load(jobID)
+	if !ok {
+		return errors.New("JobId not present in the Queue")
+	}
+
+	addrOfElement := v.(*Element)
+
+	prev := addrOfElement.Prev
+	next := addrOfElement.Next
+	prev.Next = next
+	next.Prev = prev
+
+	addrOfElement = nil
 
 	return nil
 }
