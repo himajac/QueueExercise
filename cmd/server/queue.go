@@ -25,6 +25,7 @@ type JobQueue struct {
 	count int
 	m     *sync.Map
 	mutex sync.Mutex
+
 }
 
 func NewQueue() *JobQueue {
@@ -146,6 +147,7 @@ type JobListQueue struct {
 	mutex           sync.Mutex
 	m               sync.Map
 	consumerDetails sync.Map
+//
 }
 
 func NewLinkedListQueue(logger log.Logger) *JobListQueue {
@@ -186,14 +188,42 @@ func (q *JobListQueue) Dequeue(consumerId string) (*job, error) {
 	curr := q.head
 	for curr != nil {
 		if curr.Value.Status == "QUEUED" {
-			//Lock on the item to be dequeued instead of entire queue.This allows operations like enqueue & conclude without blocking
-			curr.Value.mutex.Lock()
-			curr.Value.Status = "IN_PROGRESS"
-			//Add the details to map
-			q.consumerDetails.Store(curr.Value.Id, consumerId) //Used to store the itemId and Address of the item as key,value pair.
-			curr.Value.mutex.Unlock()
+			//Check the type of the JOb. If time_critical return that. Otherwise move towards the end till you find the time_Critical.
+			if curr.Value.Type == "TIME_CRITICAL" {
+				//Found the job.
+				//Lock on the item to be dequeued instead of entire queue.This allows operations like enqueue & conclude without blocking
+				curr.Value.mutex.Lock()
+				curr.Value.Status = "IN_PROGRESS"
+				//Add the details to map
+				q.consumerDetails.Store(curr.Value.Id, consumerId) //Used to store the itemId and Address of the item as key,value pair.
+				curr.Value.mutex.Unlock()
 
-			return &curr.Value, nil
+				return &curr.Value, nil
+			} else {
+				for curr != nil {
+					curr = curr.Next
+					if curr.Value.Type == "TIME_CRITICAL" {
+						//Found the job. Then do the return .
+						//Lock on the item to be dequeued instead of entire queue.This allows operations like enqueue & conclude without blocking
+						curr.Value.mutex.Lock()
+						curr.Value.Status = "IN_PROGRESS"
+						//Add the details to map
+						q.consumerDetails.Store(curr.Value.Id, consumerId) //Used to store the itemId and Address of the item as key,value pair.
+						curr.Value.mutex.Unlock()
+
+						return &curr.Value, nil
+					}
+				}
+				//It means there is no time_critical job in the queue. So i will return the head of the queue.
+				//Lock on the item to be dequeued instead of entire queue.This allows operations like enqueue & conclude without blocking
+				curr.Value.mutex.Lock()
+				curr.Value.Status = "IN_PROGRESS"
+				//Add the details to map
+				q.consumerDetails.Store(curr.Value.Id, consumerId) //Used to store the itemId and Address of the item as key,value pair.
+				curr.Value.mutex.Unlock()
+
+				return &curr.Value, nil
+			}
 		}
 		curr = curr.Next
 	}
